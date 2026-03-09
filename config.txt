@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────
+#  Essay Grader — Configuration File
+#  Edit the values below, then run:
+#    python grade_essays.py
+# ─────────────────────────────────────────────
+
+
+# ── Required ──────────────────────────────────
+
+# Path to the folder containing student .docx essay files
+essays_folder = 
+
+# Path to your rubric file (.txt or .docx)
+rubric_file = 
+
+
+# Your Anthropic API key (get one at console.anthropic.com)
+# Leave blank to use the ANTHROPIC_API_KEY environment variable instead
+api_key = 
+
+
+# ── Optional ──────────────────────────────────
+
+# Output filename for the Excel gradebook
+output_file = 
+
+# Folder of sample essays + filled rubrics to guide AI grading style (optional).
+# Naming convention: sara.docx + sara_rubric.docx (essay + your filled-in scores)
+examples_folder =
+
+# Grade level shown in the spreadsheet header (e.g. 10th Grade, Grade 9)
+grade_level = 
+
+# Class period shown in the spreadsheet header (e.g. 1, 5, B)
+period = 
