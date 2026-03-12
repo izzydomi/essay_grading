@@ -50,6 +50,33 @@ def read_docx(path: Path) -> str:
         return f"[ERROR reading file: {e}]"
 
 
+def read_pdf(path: Path) -> str:
+    """Extract plain text from a .pdf file using pypdf."""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(path))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(pages).strip()
+    except ImportError:
+        return "[ERROR: pypdf not installed — run: pip install pypdf]"
+    except Exception as e:
+        return f"[ERROR reading PDF: {e}]"
+
+
+def read_essay(path: Path) -> str:
+    """Read an essay file in .docx, .pdf, or .txt format."""
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        return read_docx(path)
+    if suffix == ".pdf":
+        return read_pdf(path)
+    # Plain text fallback
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        return f"[ERROR reading file: {e}]"
+
+
 def extract_student_name(filepath: Path) -> str:
     """
     Extract the student's name from the MLA header of the essay (first non-empty line).
@@ -59,10 +86,15 @@ def extract_student_name(filepath: Path) -> str:
     import re
 
     try:
-        doc = Document(filepath)
-        first_line = next(
-            (p.text.strip() for p in doc.paragraphs if p.text.strip()), ""
-        )
+        # For .docx, use paragraph structure; for other formats, read raw text
+        if filepath.suffix.lower() == ".docx":
+            doc = Document(filepath)
+            first_line = next(
+                (p.text.strip() for p in doc.paragraphs if p.text.strip()), ""
+            )
+        else:
+            text = read_essay(filepath)
+            first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
 
         if first_line:
             # Strip common label prefixes: "Name:", "Name ", etc.
@@ -77,7 +109,7 @@ def extract_student_name(filepath: Path) -> str:
             is_plausible = (
                 2 <= len(words) <= 5
                 and len(cleaned) <= 40
-                and not re.search(r'(period|class|teacher|ela\b)', cleaned, re.IGNORECASE)
+                and not re.search(r'(period|class|teacher)', cleaned, re.IGNORECASE)
             )
             if is_plausible:
                 return cleaned
@@ -93,9 +125,15 @@ def extract_student_name(filepath: Path) -> str:
     return stem.replace("_", " ").strip()
 
 
-def score_color(score) -> str:
-    if score is None: return C_GRAY
-    return {4: C_GREEN, 3: C_YELLOW, 2: C_ORANGE, 1: C_RED}.get(score, WHITE)
+def score_color(score, max_score: int = 4) -> str:
+    """Color-code a score as a fraction of max_score."""
+    if score is None:
+        return C_GRAY
+    pct = score / max_score
+    if pct >= 0.875:  return C_GREEN    # top quarter
+    if pct >= 0.625:  return C_YELLOW
+    if pct >= 0.375:  return C_ORANGE
+    return C_RED
 
 
 def letter_grade(total, max_pts) -> str:
@@ -115,28 +153,50 @@ def letter_grade(total, max_pts) -> str:
 
 # ── AI Grading ────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an experienced English teacher grading student essays.
-You will receive a rubric and an essay. Score the essay according to the rubric.
+DIFFICULTY_GUIDANCE = {
+    "easy": (
+        "Grading difficulty: EASY. Be generous and encouraging. "
+        "Give students the benefit of the doubt on ambiguous points. "
+        "Reward effort and partial credit liberally. Reserve low scores for work that is clearly missing or incorrect."
+    ),
+    "medium": (
+        "Grading difficulty: MEDIUM. Apply the rubric straightforwardly. "
+        "Award the score that best fits the work — neither inflate nor deflate."
+    ),
+    "hard": (
+        "Grading difficulty: HARD. Hold students to a high standard. "
+        "Only award the top score for work that fully and convincingly meets every criterion. "
+        "Deduct for vagueness, weak evidence, or missed requirements even if the student made an effort."
+    ),
+}
+
+
+def build_system_prompt(score_scale: int = 4, difficulty: str = "medium") -> str:
+    guidance = DIFFICULTY_GUIDANCE.get(difficulty, DIFFICULTY_GUIDANCE["medium"])
+    return f"""You are an experienced teacher grading student work.
+You will receive a rubric and a student submission. Score the submission according to the rubric.
+
+{guidance}
 
 You MUST respond with valid JSON only — no markdown fences, no extra text.
 
 Return exactly this structure:
-{
+{{
   "status": "Complete" | "Incomplete" | "Minimal" | "Blank",
-  "categories": {
-    "<category_name>": <score_1_to_4_or_null>
-  },
+  "categories": {{
+    "<category_name>": <score_1_to_{score_scale}_or_null>
+  }},
   "notes": "<concise teacher feedback, 1-3 sentences>"
-}
+}}
 
 Rules:
-- Use null for a category if that section is entirely absent from the essay.
+- Use null for a category if that section is entirely absent from the submission.
 - "Blank" = file is empty or only contains a template with no student writing.
 - "Minimal" = less than one full paragraph of real content.
 - "Incomplete" = has real content but is missing one or more required sections.
 - "Complete" = all required sections are present.
 - Keep notes brief and actionable (what's strong, what's missing, key errors).
-- Score integers only: 1, 2, 3, or 4.
+- Score integers only: 1 through {score_scale}.
 """
 
 
@@ -170,7 +230,8 @@ def load_examples(examples_dir: Path) -> list[dict]:
 
 def grade_with_ai(client: anthropic.Anthropic, rubric_text: str, essay_text: str,
                   student_name: str, category_names: list[str],
-                  examples: list[dict] = None) -> dict:
+                  examples: list[dict] = None, score_scale: int = 4,
+                  difficulty: str = "medium") -> dict:
     """Call Claude to score one essay. Returns parsed JSON dict."""
 
     if not essay_text or len(essay_text) < 30:
@@ -181,8 +242,9 @@ def grade_with_ai(client: anthropic.Anthropic, rubric_text: str, essay_text: str
         }
 
     # Build an explicit JSON template showing exactly what keys to fill in
+    score_range = "|".join(str(i) for i in range(1, score_scale + 1))
     categories_template = ",\n    ".join(
-        f'"{c}": <1|2|3|4|null>' for c in category_names
+        f'"{c}": <{score_range}|null>' for c in category_names
     )
 
     def build_user_msg(essay, name):
@@ -222,7 +284,7 @@ Return this exact JSON (fill in every value, use null only if the section is com
             response = client.messages.create(
                 model="claude-opus-4-6",
                 max_tokens=1000,
-                system=SYSTEM_PROMPT,
+                system=build_system_prompt(score_scale, difficulty),
                 messages=messages
             )
             raw = response.content[0].text.strip()
@@ -254,15 +316,15 @@ Return this exact JSON (fill in every value, use null only if the section is com
 
 def build_excel(results: list[dict], category_names: list[str], output_path: Path,
                 essay_title: str = "", period: str = "", grade_level: str = "",
-                weights: dict = None, rubric_total: int = None):
+                weights: dict = None, rubric_total: int = None, score_scale: int = 4):
     wb = Workbook()
     ws = wb.active
     ws.title = "Essay Grades"
 
     if weights is None:
-        weights = {c: 4 for c in category_names}
+        weights = {c: score_scale for c in category_names}
     if rubric_total is None:
-        rubric_total = sum(weights.get(c, 4) for c in category_names)
+        rubric_total = sum(weights.get(c, score_scale) for c in category_names)
 
     # ── Column layout ──────────────────────────────────────────────────────
     # Col 1: Student name
@@ -339,11 +401,11 @@ def build_excel(results: list[dict], category_names: list[str], output_path: Pat
 
         scores = [r["categories"].get(c) for c in category_names]
 
-        # Each category is scored 1–4. Total = (sum of scores / max possible) * rubric_total.
+        # Total = (sum of scores / max possible) * rubric_total.
         # Missing sections (None) count as 0. Denominator is always rubric_total.
         n_cats      = len(category_names)
-        earned_raw  = sum(sc for sc in scores if sc is not None)   # sum of 1–4 scores
-        max_raw     = n_cats * 4                                    # e.g. 8 × 4 = 32
+        earned_raw  = sum(sc for sc in scores if sc is not None)
+        max_raw     = n_cats * score_scale
         total       = round(earned_raw / max_raw * rubric_total, 1) if max_raw else 0
         # Show as integer when whole (e.g. 24.0 → 24)
         total_display = int(total) if total == int(total) else total
@@ -372,7 +434,7 @@ def build_excel(results: list[dict], category_names: list[str], output_path: Pat
             c = ws.cell(row=row, column=col)
             c.value = sc_val if sc_val is not None else "—"
             c.font = Font(size=10, bold=(sc_val is not None))
-            c.fill = PatternFill("solid", start_color=score_color(sc_val))
+            c.fill = PatternFill("solid", start_color=score_color(sc_val, score_scale))
             c.alignment = Alignment(horizontal="center", vertical="center")
 
         # Total — always out of rubric_total; show as integer if whole number
@@ -523,8 +585,8 @@ def _parse_rubric_with_ai(rubric_text: str) -> tuple[str, list[str], dict[str, i
                 "content": (
                     "From this rubric extract:\n"
                     "1. The assignment title (without any 'Rubric:' prefix).\n"
-                    "2. Every graded category name, in order. List each body paragraph separately.\n"
-                    "3. The point value for each category (each row is scored /4).\n"
+                    "2. Every graded category name, in order.\n"
+                    "3. The point value for each category.\n"
                     "4. The total score stated in the rubric (e.g. '/ 32' → 32).\n\n"
                     "Return JSON only:\n"
                     '{"title": "...", "categories": [...], "weights": {...}, "total": 32}\n\n'
@@ -549,8 +611,7 @@ def _parse_rubric_with_ai(rubric_text: str) -> tuple[str, list[str], dict[str, i
         import re
         total_match = re.search(r'/\s*(\d+)', rubric_text)
         rubric_total = int(total_match.group(1)) if total_match else 32
-        cats = ["Introduction", "Body Paragraph 1", "Body Paragraph 2", "Body Paragraph 3",
-                "Conclusion", "Spelling and Grammar", "Formatting", "Transition Words"]
+        cats = [f"Category {i}" for i in range(1, 9)]
         weights = {c: 4 for c in cats}
         return title, cats, weights, rubric_total
 
@@ -579,7 +640,7 @@ def load_config(config_path: Path) -> dict:
 
 
 def write_score_sheets(results: list[dict], category_names: list[str],
-                       rubric_total: int, output_path: Path):
+                       rubric_total: int, output_path: Path, score_scale: int = 4):
     """
     Write a .txt file with one score block per student, e.g.:
 
@@ -607,7 +668,7 @@ def write_score_sheets(results: list[dict], category_names: list[str],
 
         # Calculate total (same formula as build_excel)
         earned_raw = sum(sc for sc in scores if sc is not None)
-        max_raw    = n_cats * 4
+        max_raw    = n_cats * score_scale
         total      = round(earned_raw / max_raw * rubric_total, 1) if max_raw else 0
         total_display = int(total) if total == int(total) else total
 
@@ -655,6 +716,13 @@ def main():
     period       = cfg.get("period", "")
     grade_level  = cfg.get("grade_level", "")
     api_key      = cfg.get("api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    try:
+        score_scale = int(cfg.get("score_scale", "4"))
+    except ValueError:
+        sys.exit("❌  'score_scale' in config must be an integer (e.g. 4, 6, 10)")
+    difficulty = cfg.get("grading_difficulty", "medium").lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        sys.exit("❌  'grading_difficulty' must be easy, medium, or hard")
 
     if not essays_str:
         sys.exit("❌  'essays_folder' is not set in config.txt")
@@ -698,6 +766,7 @@ def main():
         print(f"    Title:      {essay_title}")
     print(f"    Categories: {', '.join(category_names)}")
     print(f"    Total pts:  {rubric_total}")
+    print(f"    Difficulty: {difficulty}")
     if grade_level:
         print(f"    Grade:      {grade_level}")
     if period:
@@ -718,9 +787,12 @@ def main():
                 print(f"    No valid examples found — grading without examples\n")
 
     # ── Find essay files ──────────────────────────────────────────────────
-    essay_files = sorted(essays_dir.glob("*.docx"))
+    essay_files = sorted(
+        f for pattern in ("*.docx", "*.pdf", "*.txt")
+        for f in essays_dir.glob(pattern)
+    )
     if not essay_files:
-        sys.exit(f"❌  No .docx files found in {essays_dir}")
+        sys.exit(f"❌  No .docx / .pdf / .txt files found in {essays_dir}")
     print(f"\n📂  Found {len(essay_files)} essays in {essays_dir}\n")
 
     # ── Grade each essay ──────────────────────────────────────────────────
@@ -729,8 +801,9 @@ def main():
         name = extract_student_name(filepath)
         print(f"  [{idx:>2}/{len(essay_files)}] Grading {name}...", end=" ", flush=True)
 
-        essay_text = read_docx(filepath)
-        result = grade_with_ai(client, rubric_text, essay_text, name, category_names, examples)
+        essay_text = read_essay(filepath)
+        result = grade_with_ai(client, rubric_text, essay_text, name, category_names,
+                               examples, score_scale, difficulty)
         result["name"] = name
         result["file"] = filepath.name
 
@@ -741,7 +814,7 @@ def main():
 
         valid = [s for s in result["categories"].values() if s is not None]
         earned_raw = sum(valid)
-        total_preview = round(earned_raw / (len(category_names) * 4) * rubric_total, 1) if category_names else 0
+        total_preview = round(earned_raw / (len(category_names) * score_scale) * rubric_total, 1) if category_names else 0
         print(f"{result['status']}  ({total_preview}/{rubric_total})")
 
         results.append(result)
@@ -751,11 +824,11 @@ def main():
     print(f"\n📊  Building Excel gradebook...")
     build_excel(results, category_names, output_path,
                 essay_title=essay_title, period=period, grade_level=grade_level,
-                weights=weights, rubric_total=rubric_total)
+                weights=weights, rubric_total=rubric_total, score_scale=score_scale)
 
     # ── Write score sheets .txt ───────────────────────────────────────────
     txt_path = output_path.with_suffix(".txt")
-    write_score_sheets(results, category_names, rubric_total, txt_path)
+    write_score_sheets(results, category_names, rubric_total, txt_path, score_scale)
 
     # ── Summary ───────────────────────────────────────────────────────────
     from collections import Counter

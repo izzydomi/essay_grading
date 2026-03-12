@@ -32,4 +32,10 @@ examples_folder =
 grade_level = 
 
 # Class period shown in the spreadsheet header (e.g. 1, 5, B)
-period = 
+period =
+
+# How strictly Claude should grade (easy, medium, hard). Defaults to medium.
+#   easy   — generous; benefit of the doubt, liberal partial credit
+#   medium — straightforward rubric application, no inflation or deflation
+#   hard   — high standard; top score only for fully convincing work
+grading_difficulty = medium
