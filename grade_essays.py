@@ -77,7 +77,7 @@ def extract_student_name(filepath: Path) -> str:
             is_plausible = (
                 2 <= len(words) <= 5
                 and len(cleaned) <= 40
-                and not re.search(r'(period|class|teacher|burkinsky|ela\b)', cleaned, re.IGNORECASE)
+                and not re.search(r'(period|class|teacher|ela\b)', cleaned, re.IGNORECASE)
             )
             if is_plausible:
                 return cleaned

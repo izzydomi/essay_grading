@@ -79,8 +79,8 @@ essay_grader/
 ├── requirements.txt
 ├── rubric.txt            ← your rubric
 ├── essays/               ← folder of student .docx submissions
-│   ├── Sara_Stone_-_Essay.docx
-│   ├── Chana_Meijers_-_Essay.docx
+│   ├── Sara_S_-_Essay.docx
+│   ├── Chana_M_-_Essay.docx
 │   └── ...
 └── grades.xlsx           ← output (created automatically)
 ```
@@ -140,8 +140,7 @@ The Excel file includes:
 
 ## Tips
 
-- **File naming:** Student names are extracted from filenames automatically.
-  `Sara_Stone_-_Peace_Essay.docx` → `Sara Stone`. Any format works.
+- **File naming:** Student names are extracted from MLA header automatically.
 - **API costs:** Each essay costs roughly $0.01–0.03 to grade (using Claude Opus).
   A class of 40 essays costs under $1.
 - **Multiple classes:** Use separate config files per class and run with
