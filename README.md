@@ -47,9 +47,12 @@ grade_level = 10th Grade
 
 # Class period shown in the spreadsheet header (e.g. 1, 5, B)
 period = 5
+
+# How strictly Claude should grade (easy, medium, hard)
+grading_difficulty = medium
 ```
 
-`grade_level` and `period` are optional — leave them blank to omit from the header.
+`grade_level`, `period`, and `grading_difficulty` are optional — leave them blank to use the defaults.
 
 ### Step 2 — Run the program
 
@@ -135,6 +138,18 @@ The Excel file includes:
 - Total score and letter grade
 - Brief AI-generated teacher notes for each student
 - A Legend tab explaining the color coding
+
+---
+
+## Grading difficulty
+
+The `grading_difficulty` setting controls how strictly Claude applies the rubric:
+
+| Value | Behavior |
+|-------|----------|
+| `easy` | Generous; gives benefit of the doubt and liberal partial credit |
+| `medium` | Straightforward rubric application — neither inflated nor deflated (default) |
+| `hard` | High standard; top score only for fully convincing work, deducts for vagueness or weak evidence |
 
 ---
 

@@ -195,8 +195,8 @@ Rules:
 - "Minimal" = less than one full paragraph of real content.
 - "Incomplete" = has real content but is missing one or more required sections.
 - "Complete" = all required sections are present.
-- Keep notes brief and actionable (what's strong, what's missing, key errors).
 - Score integers only: 1 through {score_scale}.
+- In "notes", for every category that did not receive the maximum score, briefly state the specific reason points were deducted (e.g. "Introduction (-1): thesis was vague"). Then add any overall strengths or suggestions.
 """
 
 
