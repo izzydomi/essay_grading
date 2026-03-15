@@ -683,6 +683,12 @@ def write_score_sheets(results: list[dict], category_names: list[str],
 
         lines.append("")
         lines.append(f"Total Score: {total_display}/{rubric_total}")
+
+        notes = r.get("notes", "").strip()
+        if notes:
+            lines.append("")
+            lines.append(f"Notes: {notes}")
+
         lines.append(divider)
         lines.append("")   # blank line between students
 
